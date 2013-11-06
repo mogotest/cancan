@@ -82,6 +82,10 @@ module CanCan
     end
 
     def build_resource
+      if defined?(::Sequel)
+        raise "Cannot build resources with Sequel.  You will need to do this manually."
+      end
+
       resource = resource_base.new(resource_params || {})
       assign_attributes(resource)
     end
@@ -105,7 +109,9 @@ module CanCan
         parent_resource.send(name)
       else
         if @options[:find_by]
-          if resource_base.respond_to? "find_by_#{@options[:find_by]}!"
+          if resource_base.respond_to? :where
+            resource_base.where(@options[:find_by].to_sym => id_param).first
+          elsif resource_base.respond_to? "find_by_#{@options[:find_by]}!"
             resource_base.send("find_by_#{@options[:find_by]}!", id_param)
           elsif resource_base.respond_to? "find_by"
             resource_base.send("find_by", { @options[:find_by].to_sym => id_param })
@@ -113,7 +119,11 @@ module CanCan
             resource_base.send(@options[:find_by], id_param)
           end
         else
-          adapter.find(resource_base, id_param)
+          if resource_base.respond_to? :with_pk!
+            resource_base.with_pk!(id_param)
+          else
+            adapter.find(resource_base, id_param)
+          end
         end
       end
     end
@@ -143,10 +153,10 @@ module CanCan
     # only be used for authorization, not loading since there's no class to load through.
     def resource_class
       case @options[:class]
-      when false  then name.to_sym
-      when nil    then namespaced_name.to_s.camelize.constantize
-      when String then @options[:class].constantize
-      else @options[:class]
+        when false  then name.to_sym
+        when nil    then namespaced_name.to_s.camelize.constantize
+        when String then @options[:class].constantize
+        else @options[:class]
       end
     end
 
@@ -177,7 +187,15 @@ module CanCan
     def resource_base
       if @options[:through]
         if parent_resource
-          @options[:singleton] ? resource_class : parent_resource.send(@options[:through_association] || name.to_s.pluralize)
+          if @options[:singleton]
+            resource_class
+          else
+            if defined?(::Sequel)
+              parent_resource.send("#{@options[:through_association] || name.to_s.pluralize}_dataset")
+            else
+              parent_resource.send(@options[:through_association] || name.to_s.pluralize)
+            end
+          end
         elsif @options[:shallow]
           resource_class
         else
@@ -255,7 +273,7 @@ module CanCan
     private
 
     def extract_key(value)
-       value.to_s.underscore.gsub('/', '_')
+      value.to_s.underscore.gsub('/', '_')
     end
   end
 end
